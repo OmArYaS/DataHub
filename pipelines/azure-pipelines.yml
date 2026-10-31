@@ -1,0 +1,106 @@
+# DataHub CI — federated reporting hub.
+#
+# Three lights must be green for a PR: the .NET solution builds + its xUnit
+# suite passes (guard rules, retry contracts, full-pipeline API contracts),
+# the React webapp compiles, and the live-engine integration tests run
+# against real MySQL + SQL Server service containers (tests degrade silently
+# to skips on any machine where the env vars do not carry a live engine —
+# including this pipeline without the seeding step wired to your container
+# host).
+#
+# Wire in Azure DevOps: Pipelines → New Pipeline → Existing YAML → pipelines/azure-pipelines.yml
+name: DataHub-CI
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    exclude:
+      - '*.md'
+      - 'docs/**'
+
+pr:
+  branches:
+    include:
+      - main
+
+jobs:
+  - job: datahub
+    displayName: Build, test (unit + API + live engines), webapp
+    pool:
+      vmImage: 'ubuntu-latest'
+    variables:
+      buildConfiguration: 'Release'
+      solution: 'DataHub.sln'
+
+    # Service containers give the integration suite real engines. On hosted
+    # Linux agents they are reachable by their service label (mysql/sqlserver).
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: 'DataHub#Demo2026'
+          MYSQL_DATABASE: 'datahub_retail'
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: 'Y'
+          MSSQL_SA_PASSWORD: 'DataHub#Demo2026'
+
+    steps:
+      - task: UseDotNet@2
+        displayName: Install .NET SDK 10
+        inputs:
+          version: '10.0.x'
+
+      - script: dotnet build $(solution) -c $(buildConfiguration) --nologo
+        displayName: Build DataHub solution (0 warnings via NETAnalyzers)
+
+      # ── seed the demo datasets inside the service containers ────────────────
+      - bash: |
+          set -e
+          MYSQL_CID=$(docker ps -q --filter "ancestor=mysql:8.4" | head -n1)
+          docker exec -i $MYSQL_CID mysql -uroot -p'DataHub#Demo2026' datahub_retail < database/mysql_storefront.sql
+          MYSQL_GRANTS=$(docker exec $MYSQL_CID mysql -uroot -p'DataHub#Demo2026' -N -e \
+            "CREATE USER IF NOT EXISTS 'datahub_demo'@'%' IDENTIFIED BY 'DataHub#Demo2026';
+             GRANT SELECT ON datahub_retail.* TO 'datahub_demo'@'%';")
+          SQL_CID=$(docker ps -q --filter "ancestor=mcr.microsoft.com/mssql/server:2022-latest" | head -n1)
+          docker exec -i $SQL_CID /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'DataHub#Demo2026' -C -i /dev/stdin < database/sqlserver_warehouse.sql
+        displayName: Seed MySQL storefront + SQL Server warehouse demo data
+
+      - task: DotNetCoreCLI@2
+        displayName: Run xUnit suite (guard rules, retry pipeline, API contracts, live engines)
+        env:
+          DATAHUB_MYSQL_CONN: 'Server=mysql;Port=3306;Database=datahub_retail;User ID=datahub_demo;Password=DataHub#Demo2026;ConnectionTimeout=10;DefaultCommandTimeout=20'
+          DATAHUB_SQLSERVER_CONN: 'Server=sqlserver,1433;Database=finance;User ID=sa;Password=DataHub#Demo2026;TrustServerCertificate=true;Connection Timeout=10'
+        inputs:
+          command: test
+          projects: $(solution)
+          arguments: >-
+            -c $(buildConfiguration)
+            --collect:"XPlat Code Coverage"
+            --results-directory $(Agent.TempDirectory)/coverage
+      - script: dotnet publish src/DataHub.Api/DataHub.Api.csproj -c $(buildConfiguration) -o $(Build.ArtifactStagingDirectory)/api --nologo
+        displayName: Publish DataHub API
+
+      - task: NodeTool@0
+        displayName: Install Node 20
+        inputs:
+          versionSpec: '20.x'
+
+      - script: npm install --no-audit --no-fund
+        displayName: npm install (React webapp; no lockfile is committed)
+        workingDirectory: webapp
+
+      - script: npm run build
+        displayName: React production build (Vite + tsc)
+        workingDirectory: webapp
+
+      - publish: $(Build.ArtifactStagingDirectory)/api
+        artifact: datahub-api-drop
+        displayName: Publish API artifact
+
+      - publish: webapp/dist
+        artifact: datahub-web-drop
+        displayName: Publish webapp artifact

@@ -1,0 +1,189 @@
+{
+  "info": {
+    "name": "DataHub API",
+    "description": "Federated reporting hub — auth, query catalog, source registry, Blob sync jobs, health. Local demo profile: run `dotnet run --project src/DataHub.Api` first, then hit 'Login'. Requests use the Bearer token the login call stores automatically.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:7200" },
+    { "key": "userName", "value": "nadia" },
+    { "key": "reportKey", "value": "revenue_by_region" },
+    { "key": "accessToken", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [ { "key": "token", "value": "{{accessToken}}", "type": "string" } ]
+  },
+  "item": [
+    {
+      "name": "Login — issue demo token",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('token issued', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.collectionVariables.set('accessToken', body.accessToken);",
+              "pm.test('roles travel on the token', () => pm.expect(body.roles).to.eql(['admin']));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "url": "{{baseUrl}}/api/auth/token",
+        "body": { "mode": "raw", "raw": "{ \"userName\": \"{{userName}}\" }" }
+      }
+    },
+    {
+      "name": "Reports",
+      "item": [
+        {
+          "name": "List reports (grant-filtered)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('200 OK', () => pm.response.to.have.status(200));" ] } } ],
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/reports" }
+        },
+        {
+          "name": "Report detail",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/reports/{{reportKey}}" }
+        },
+        {
+          "name": "Run a report (cache MISS → HIT → 304)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('table returned', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('16-hex ETag', () => pm.expect(body.etag).to.match(/^[0-9A-F]{16}$/));",
+                  "pm.collectionVariables.set('lastEtag', body.etag);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "url": "{{baseUrl}}/api/reports/{{reportKey}}/query",
+            "body": { "mode": "raw", "raw": "{ \"page\": 1, \"pageSize\": 100, \"bypassCache\": false }" }
+          }
+        },
+        {
+          "name": "Run a report — If-None-Match (expect 304)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('304 not modified', () => pm.response.to.have.status(304));" ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "If-None-Match", "value": "{{lastEtag}}" }
+            ],
+            "url": "{{baseUrl}}/api/reports/{{reportKey}}/query",
+            "body": { "mode": "raw", "raw": "{ \"page\": 1, \"pageSize\": 100, \"bypassCache\": false }" }
+          }
+        },
+        {
+          "name": "Register a report (admin) — expects 201",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('created', () => pm.response.to.have.status(201));" ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "url": "{{baseUrl}}/api/reports",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"reportKey\": \"top_regions_preview\", \"displayName\": \"Top regions (preview)\", \"sourceKey\": \"local_warehouse\", \"queryText\": \"SELECT region_name AS region, COUNT(1) AS n FROM dim_region GROUP BY region_name ORDER BY n DESC\", \"allowedRoles\": [\"analyst\", \"admin\"], \"isCacheable\": true, \"cacheSecondsTtl\": 60, \"syncIntervalMinutes\": null }"
+            }
+          }
+        },
+        {
+          "name": "Register a bad query — expects 422 INVALID_QUERY",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('422', () => pm.response.to.have.status(422));", "pm.test('code INVALID_QUERY', () => pm.expect(pm.response.json().code).to.equal('INVALID_QUERY'));" ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "url": "{{baseUrl}}/api/reports",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"reportKey\": \"no_order\", \"displayName\": \"No order\", \"sourceKey\": \"local_warehouse\", \"queryText\": \"SELECT region_name FROM dim_region GROUP BY region_name\", \"allowedRoles\": [\"analyst\"] }"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Sources",
+      "item": [
+        {
+          "name": "List sources (secrets masked)",
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('no secret leaks', () => pm.expect(pm.response.text()).to.not.include('not-a-real-secret'));" ] } } ],
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/sources" }
+        },
+        {
+          "name": "Ping a source (SELECT 1 battery)",
+          "request": { "method": "POST", "url": "{{baseUrl}}/api/sources/{{reportSourceKey}}" }
+        },
+        {
+          "name": "Disable a source",
+          "request": { "method": "POST", "url": "{{baseUrl}}/api/sources/local_warehouse/disable" }
+        },
+        {
+          "name": "Enable a source",
+          "request": { "method": "POST", "url": "{{baseUrl}}/api/sources/local_warehouse/enable" }
+        },
+        {
+          "name": "Register a source (admin) — expects 201",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "url": "{{baseUrl}}/api/sources",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"sourceKey\": \"postgres_oltp\", \"displayName\": \"Postgres OLTP (planned)\", \"provider\": \"mysql\", \"connectionName\": \"MysqlRetail\", \"commandTimeoutSeconds\": 30 }"
+            }
+          }
+        }
+      ],
+      "variable": [ { "key": "reportSourceKey", "value": "local_warehouse" } ]
+    },
+    {
+      "name": "Sync jobs (Blob partitions)",
+      "item": [
+        {
+          "name": "Trigger one run (admin)",
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('run recorded in ledger', () => pm.expect(pm.response.json().status).to.be.oneOf(['completed', 'failed', 'pending']));" ] } } ],
+          "request": { "method": "POST", "url": "{{baseUrl}}/api/sync/run/{{reportKey}}" }
+        },
+        {
+          "name": "Run every due report (scheduler cycle on demand)",
+          "request": { "method": "POST", "url": "{{baseUrl}}/api/sync/run-due" }
+        },
+        {
+          "name": "Ledger (newest first)",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/sync/runs?page=1&pageSize=20" }
+        },
+        {
+          "name": "Ledger filtered by report",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/sync/runs?reportKey={{reportKey}}" }
+        },
+        {
+          "name": "Dashboard tiles",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/sync/dashboard" }
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "item": [
+        { "name": "Readiness (catalog-db)", "request": { "method": "GET", "url": "{{baseUrl}}/health" } },
+        { "name": "Full health (federated sources degrade gracefully)", "request": { "method": "GET", "url": "{{baseUrl}}/health/all" } }
+      ]
+    }
+  ]
+}

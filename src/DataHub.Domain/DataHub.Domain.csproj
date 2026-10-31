@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Entities, enums, and query-safety rules for the DataHub unification platform. Pure .NET — no framework dependencies.</Description>
+  </PropertyGroup>
+
+</Project>

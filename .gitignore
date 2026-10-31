@@ -1,0 +1,38 @@
+# ── .NET ──────────────────────────────────────────────────────────────────────
+bin/
+obj/
+*.user
+*.suo
+
+# Local demo databases (the SQLite profile seeds itself at boot — datahub.db
+# is runtime state, never committed)
+*.db
+*.db-shm
+*.db-wal
+
+# Sync sink output (demo-everyday File System sinks hang on var/sync)
+var/
+sync-output/
+
+# ── Visual Studio / Rider / VS Code ──────────────────────────────────────────
+.vs/
+.idea/
+.vscode/*
+!.vscode/launch.json
+!.vscode/settings.json
+
+# ── Node / React webapp ──────────────────────────────────────────────────────
+node_modules/
+webapp/dist/
+npm-debug.log*
+yarn-error.log*
+
+# ── Test / coverage ──────────────────────────────────────────────────────────
+TestResults/
+coverage/
+*.coverage
+*.trx
+
+# ── OS noise ─────────────────────────────────────────────────────────────────
+Thumbs.db
+.DS_Store
