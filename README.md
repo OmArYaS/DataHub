@@ -1,10 +1,10 @@
 # DataHub
 
-> One reporting surface over SQL Server / Azure SQL / MySQL / SQLite sources —
+> One reporting surface over SQL Server / MySQL / SQLite sources —
 > an admin-authored read-only query catalog, per-role grants, Redis-or-memory
 > caching with honest ETags/304s, and periodic CSV partitions synced to Blob
 > Storage. ASP.NET Core 10 (EF Core, full analyzers at **0 warnings**) +
-> React (Vite) + Azure DevOps CI.
+> React (Vite) + a CI pipeline running the test suite.
 
 ## Why this project exists (interview brief)
 
@@ -87,8 +87,8 @@ containers; a laptop run simply skips those tests.
 
 ## Backend stack
 
-ASP.NET Core 10 (API) · EF Core 10 (catalog store; SQLite demo, SQL Server /
-Azure SQL production profile) · Microsoft.Data.SqlClient / MySqlConnector /
+ASP.NET Core 10 (API) · EF Core 10 (catalog store; SQLite demo, SQL Server
+production profile) · Microsoft.Data.SqlClient / MySqlConnector /
 Microsoft.Data.Sqlite (federated reads) · `IDistributedCache` → Redis in
 production (`datahub:` key prefix), in-memory in demos/tests ·
 Azure.Storage.Blobs (sync sink; folder-backed demo) · Swashbuckle ·
@@ -99,7 +99,7 @@ AspNetCore.HealthChecks (+ Redis) · xUnit.
 - The demo signing key and demo users live in `appsettings.json` — committed
   on purpose (it is a local-only Development issuer). Production binds
   `Auth:Mode=AzureAd` and every secret moves to Key Vault slots. The shipped
-  MySQL / Azure SQL credentials are fake by intent: they keep the demo
+  MySQL / remote SQL credentials are fake by intent: they keep the demo
   health reporting honest (reachable local warehouse vs unreachable clouds).
 - Sync partitions cap at 50 000 rows, pulled in pages of 500 — the same
   source-protection ceiling the API path enforces. One honest ceiling.
